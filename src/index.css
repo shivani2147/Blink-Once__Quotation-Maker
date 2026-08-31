@@ -2175,3 +2175,15 @@ button {
   text-align: center;
   border-top: 1px solid #ccc;
 }
+
+/* Prevent elements from breaking across pages in PDF */
+.doc-payment-terms,
+.doc-service-item,
+.doc-financials,
+.doc-team-section,
+.doc-footer-section,
+.doc-section,
+.doc-team-card {
+  page-break-inside: avoid !important;
+  break-inside: avoid !important;
+}

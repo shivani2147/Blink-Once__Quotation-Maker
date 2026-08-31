@@ -191,6 +191,7 @@ export default function App() {
     }
   });
   const [selectedQuotationId, setSelectedQuotationId] = useState(null);
+  const [folderPdfs, setFolderPdfs] = useState([]);
 
   const navigate = (path) => {
     window.history.pushState({}, '', path);
@@ -211,6 +212,18 @@ export default function App() {
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
+
+  React.useEffect(() => {
+    if (!quotationMode || activeView !== 'saved') return;
+    fetch(`/api/list-pdfs?category=${encodeURIComponent(quotationMode)}`)
+      .then(res => res.json())
+      .then(data => {
+        if (data.success) {
+          setFolderPdfs(data.files || []);
+        }
+      })
+      .catch(err => console.error("Error fetching PDFs:", err));
+  }, [quotationMode, activeView]);
 
   React.useEffect(() => {
     if (!quotationMode) return;
@@ -238,6 +251,28 @@ export default function App() {
     setSelectedQuotationId(quotation.id);
   };
 
+  const deleteExternalPdf = async (filename) => {
+    if (!window.confirm('Delete this PDF? This cannot be undone.')) return;
+    try {
+      const res = await fetch('/api/delete-pdf', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ category: quotationMode, filename })
+      });
+      if (res.ok) {
+        setFolderPdfs(prev => prev.filter(pdf => pdf.name !== filename));
+        if (selectedQuotationId === filename) {
+          setSelectedQuotationId(null);
+        }
+      } else {
+        alert('Failed to delete file');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Error deleting file');
+    }
+  };
+
   const loadQuotation = (quotation) => {
     setCompany(quotation.company);
     setDetails({ quoteTitle: 'Booking Receipt', paymentTerms: 'Advance Paid', quotationRef: 'Special August Offer', ...quotation.details });
@@ -263,12 +298,88 @@ export default function App() {
     return <QuotationPreview {...previewProps} setTheme={quotation ? () => { } : setTheme} />;
   };
 
+  const renderExternalPdfPreview = (extPdf) => {
+    const qMode = quotationMode || 'wedding';
+    
+    if (qMode === 'wedding') {
+      return (
+        <div className="wedding-preview-shell">
+          <div className="preview-toolbar wedding-toolbar">
+            <span>Wedding Quotation Receipt Preview</span>
+          </div>
+          <div className="wedding-preview-container">
+            <div className="wedding-paper" style={{ padding: 0, overflow: 'hidden', height: '1100px' }}>
+              <iframe src={`${extPdf.path}#toolbar=0&navpanes=0&scrollbar=0&view=FitH`} style={{width: '100%', height: '100%', border: 'none'}} title="PDF Preview" scrolling="no" />
+            </div>
+          </div>
+        </div>
+      );
+    }
+    
+    if (qMode === 'proforma') {
+      return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', width: '100%' }}>
+          <div className="preview-toolbar" style={{ background: 'var(--bg-card)' }}>
+             <span>Proforma Invoice Preview</span>
+          </div>
+          <div style={{ background: '#f8fafc', padding: '2rem', display: 'flex', justifyContent: 'center' }}>
+            <div className="pi-doc" style={{ padding: 0, overflow: 'hidden', height: '1100px', width: '794px' }}>
+               <iframe src={`${extPdf.path}#toolbar=0&navpanes=0&scrollbar=0&view=FitH`} style={{width: '100%', height: '100%', border: 'none'}} title="PDF Preview" scrolling="no" />
+            </div>
+          </div>
+        </div>
+      );
+    }
+    
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', width: '100%' }}>
+        <div className="preview-toolbar" style={{ background: 'var(--bg-card)' }}>
+           <span>Corporate Quotation Preview</span>
+        </div>
+        <div style={{ background: '#f8fafc', padding: '2rem', display: 'flex', justifyContent: 'center' }}>
+          <div className="quotation-document" style={{ padding: 0, overflow: 'hidden', height: '1100px', width: '794px' }}>
+             <iframe src={`${extPdf.path}#toolbar=0&navpanes=0&scrollbar=0&view=FitH`} style={{width: '100%', height: '100%', border: 'none'}} title="PDF Preview" scrolling="no" />
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const deleteQuotation = (quotationId) => {
     if (window.confirm('Are you sure you want to delete this quotation? This action cannot be undone.')) {
+      const quotationToDelete = savedQuotations.find(item => item.id === quotationId);
+
       const nextQuotations = savedQuotations.filter(item => item.id !== quotationId);
       setSavedQuotations(nextQuotations);
       localStorage.setItem(savedStorageKey, JSON.stringify(nextQuotations));
       if (selectedQuotationId === quotationId) setSelectedQuotationId(null);
+
+      // Revert the sequence number if deleting the most recently generated quotation/invoice
+      const match = String(quotationId).match(/^(QT|PI)-\d+-(\d+)$/);
+      if (match) {
+        const isProforma = match[1] === 'PI';
+        const currentNumber = Number(match[2]);
+        const storageKey = isProforma ? 'proformaNextNumber' : 'quotationNextNumber';
+        const nextNumber = Number(localStorage.getItem(storageKey));
+        if (currentNumber === nextNumber - 1) {
+          localStorage.setItem(storageKey, String(currentNumber));
+        }
+      }
+
+      // Move generated PDF to 'Deleted Files' if it exists
+      if (quotationToDelete) {
+        const qMode = quotationToDelete.quotationMode || quotationMode;
+        const filename = getPdfFilename(qMode, quotationToDelete.details)
+          .replace(/[<>:"/\\|?*]+/g, '')
+          .replace(/\s+/g, ' ')
+          .trim() + '.pdf';
+        
+        fetch('/api/delete-pdf', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ category: qMode, filename })
+        }).catch(err => console.error('Failed to move deleted PDF', err));
+      }
     }
   };
 
@@ -286,7 +397,9 @@ export default function App() {
       .replace(/[<>:"/\\|?*]+/g, '')
       .replace(/\s+/g, ' ')
       .trim() + '.pdf';
-    await downloadQuotationPDF('quotation-document', filename);
+    
+    await downloadQuotationPDF('quotation-document', filename, quotationMode);
+    
     setIsDownloading(false);
   };
 
@@ -356,7 +469,14 @@ export default function App() {
 
       {/* Top Application Header */}
       <header className="app-header">
-        <div className="brand-container">
+        <div 
+          className="brand-container" 
+          onClick={() => navigate('/')} 
+          style={{ cursor: 'pointer', transition: 'opacity 0.2s' }}
+          onMouseOver={(e) => e.currentTarget.style.opacity = '0.8'}
+          onMouseOut={(e) => e.currentTarget.style.opacity = '1'}
+          title="Return to Home Screen"
+        >
           <div className="brand-icon">
             <Building2 size={20} />
           </div>
@@ -427,7 +547,7 @@ export default function App() {
               <p>Open a quotation to review it or continue editing its details.</p>
             </div>
           </div>
-          {savedQuotations.length === 0 ? (
+          {savedQuotations.length === 0 && folderPdfs.length === 0 ? (
             <div className="glass-card empty-state"><Archive size={34} /><h2>No saved quotations yet</h2><p>Finalize a quotation to keep it here for later editing.</p></div>
           ) : (
             <div className="saved-layout">
@@ -446,7 +566,7 @@ export default function App() {
                           setIsDownloading(true);
                           const qMode = quotation.quotationMode || quotationMode;
                           const filename = getPdfFilename(qMode, quotation.details).replace(/[<>:"/\\|?*]+/g, '').replace(/\s+/g, ' ').trim() + '.pdf';
-                          await downloadQuotationPDF('quotation-document', filename);
+                          await downloadQuotationPDF('quotation-document', filename, qMode);
                           setIsDownloading(false);
                         }, 100);
                       }}><Download size={15} /></button>
@@ -455,11 +575,56 @@ export default function App() {
                     </div>
                   </div>
                 ))}
+                {folderPdfs.length > 0 && (
+                  <>
+                    {folderPdfs.map((pdf, idx) => {
+                      const isMatched = savedQuotations.some(q => {
+                         const qMode = q.quotationMode || quotationMode;
+                         const expected = getPdfFilename(qMode, q.details).replace(/[<>:"/\\|?*]+/g, '').replace(/\s+/g, ' ').trim() + '.pdf';
+                         return expected === pdf.name;
+                      });
+                      if (isMatched) return null;
+
+                      return (
+                        <div className={`saved-item ${selectedQuotationId === pdf.name ? 'active' : ''}`} key={`pdf-${idx}`}>
+                          <button className="saved-item-main" onClick={() => setSelectedQuotationId(pdf.name)}>
+                            <span className="saved-item-icon" style={{ opacity: 0.5 }}><FileText size={18} /></span>
+                            <span><strong>{pdf.name}</strong><small>External PDF file</small></span>
+                          </button>
+                          <div className="saved-item-actions">
+                            <button className="icon-btn" title="Download PDF" onClick={(e) => {
+                              e.stopPropagation();
+                              const a = document.createElement('a');
+                              a.href = pdf.path;
+                              a.download = pdf.name;
+                              a.click();
+                            }}><Download size={15} /></button>
+                            <button className="icon-btn" title="Cannot edit a raw PDF" disabled style={{ opacity: 0.3, cursor: 'not-allowed' }}><Edit3 size={15} /></button>
+                            <button className="icon-btn danger" title="Delete PDF" onClick={() => deleteExternalPdf(pdf.name)}><Trash2 size={15} /></button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </>
+                )}
               </div>
               <div className="saved-preview">
                 {(() => {
-                  const quotation = savedQuotations.find(item => item.id === selectedQuotationId) || savedQuotations[0];
-                  return quotation ? renderPreview(quotation) : null;
+                  const quotation = savedQuotations.find(item => item.id === selectedQuotationId);
+                  if (quotation) return renderPreview(quotation);
+                  
+                  const extPdf = folderPdfs.find(pdf => pdf.name === selectedQuotationId);
+                  if (extPdf) {
+                    return renderExternalPdfPreview(extPdf);
+                  }
+                  
+                  const defaultQuotation = savedQuotations[0];
+                  if (defaultQuotation) return renderPreview(defaultQuotation);
+                  
+                  const defaultExtPdf = folderPdfs[0];
+                  if (defaultExtPdf) return renderExternalPdfPreview(defaultExtPdf);
+                  
+                  return null;
                 })()}
               </div>
             </div>

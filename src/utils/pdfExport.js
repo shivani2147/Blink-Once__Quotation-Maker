@@ -1,14 +1,18 @@
 import html2pdf from 'html2pdf.js';
 
-export const downloadQuotationPDF = async (elementId, filename = 'Corporate_Quotation.pdf') => {
+export const downloadQuotationPDF = async (elementId, filename = 'Corporate_Quotation.pdf', category = 'corporate') => {
   const element = document.getElementById(elementId);
   if (!element) {
     console.error(`Element #${elementId} not found`);
     return false;
   }
 
-  // A4 at 96 DPI = 794px wide. We render the element at that exact width
-  // and map it to the A4 PDF page with zero margins so nothing gets clipped.
+  // Get the exact height of the element to make a single continuous page
+  // We add a 20px buffer to ensure no content accidentally spills over into a blank 2nd page
+  const width = 794;
+  const baseHeight = element.scrollHeight || element.offsetHeight;
+  const height = baseHeight + 20;
+
   const opt = {
     margin:   0,
     filename: filename,
@@ -19,19 +23,44 @@ export const downloadQuotationPDF = async (elementId, filename = 'Corporate_Quot
       letterRendering: true,
       scrollX:         0,
       scrollY:         -window.scrollY,
-      windowWidth:     794,   // match the .quotation-paper CSS width exactly
+      windowWidth:     width,
     },
     jsPDF: {
       unit:        'px',
-      format:      [794, 1123],  // exact A4 px dimensions at 96dpi
+      format:      [width, height],
       orientation: 'portrait',
       hotfixes:    ['px_scaling'],
-    },
-    pagebreak: { mode: ['css', 'legacy'] },
+    }
   };
 
   try {
-    await html2pdf().set(opt).from(element).save();
+    // Generate the PDF and get it as a Blob for the backup
+    const pdf = await html2pdf().set(opt).from(element).toPdf().get('pdf');
+    const pdfBlob = pdf.output('blob');
+
+    // 1. Asynchronously send a backup copy to the Vite backend folder
+    fetch('/api/save-pdf', {
+      method: 'POST',
+      body: pdfBlob,
+      headers: {
+        'x-category': encodeURIComponent(category),
+        'x-filename': encodeURIComponent(filename)
+      }
+    }).then(res => {
+      if (res.ok) console.log('Backup PDF saved successfully to project folder');
+      else console.error('Failed to save backup to backend');
+    }).catch(err => console.error('Backend save error:', err));
+
+    // 2. Trigger standard browser download for the user using the blob we just generated
+    const url = URL.createObjectURL(pdfBlob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    
     return true;
   } catch (err) {
     console.error('PDF generation error, falling back to window.print()', err);
