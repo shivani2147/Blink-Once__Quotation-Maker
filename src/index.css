@@ -1997,9 +1997,7 @@ button {
 }
 
 .pi-client-right .pi-field-value {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  word-break: break-word;
 }
 
 /* ── TABLE ── */

@@ -1,0 +1,3 @@
+To run the code : 
+    - venv\Scripts\activate
+    - npm run dev
