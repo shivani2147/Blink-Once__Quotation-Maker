@@ -51,16 +51,8 @@ export const downloadQuotationPDF = async (elementId, filename = 'Corporate_Quot
       else console.error('Failed to save backup to backend');
     }).catch(err => console.error('Backend save error:', err));
 
-    // 2. Trigger standard browser download for the user using the blob we just generated
-    const url = URL.createObjectURL(pdfBlob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
     
+
     return true;
   } catch (err) {
     console.error('PDF generation error, falling back to window.print()', err);
